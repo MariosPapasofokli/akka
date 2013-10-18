@@ -10,7 +10,7 @@ import com.typesafe.sbt.SbtMultiJvm
 import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys.{ MultiJvm, extraOptions, jvmOptions, scalatestOptions, multiNodeExecuteTests, multiNodeJavaName, multiNodeHostsFileName, multiNodeTargetDirName, multiTestOptions }
 import com.typesafe.sbt.SbtScalariform
 import com.typesafe.sbt.SbtScalariform.ScalariformKeys
-import com.typesafe.sbtosgi.OsgiPlugin.{ OsgiKeys, osgiSettings }
+import com.typesafe.sbt.osgi.SbtOsgi.{ OsgiKeys, osgiSettings }
 import com.typesafe.tools.mima.plugin.MimaPlugin.mimaDefaultSettings
 import com.typesafe.tools.mima.plugin.MimaKeys.previousArtifact
 import com.typesafe.tools.mima.plugin.MimaKeys.reportBinaryIssues
@@ -427,7 +427,7 @@ object AkkaBuild extends Build {
       publishMavenStyle := false, // SBT Plugins should be published as Ivy
       publishTo <<= Publish.akkaPluginPublishTo,
       scalacOptions in Compile := Seq("-encoding", "UTF-8", "-deprecation", "-unchecked"),
-      scalaVersion := "2.9.2",
+      scalaVersion := "2.10.2",
       scalaBinaryVersion <<= scalaVersion,
       reportBinaryIssues := () // disable bin comp check
     )
@@ -849,9 +849,9 @@ object AkkaBuild extends Build {
     .setPreference(AlignSingleLineCaseStatements, true)
   }
 
-  lazy val multiJvmSettings = SbtMultiJvm.multiJvmSettings ++ inConfig(MultiJvm)(SbtScalariform.scalariformSettings) ++ Seq(
+  lazy val multiJvmSettings = SbtMultiJvm.multiJvmSettings ++ inConfig(MultiJvm)(SbtScalariform.configScalariformSettings) ++ Seq(
     jvmOptions in MultiJvm := defaultMultiJvmOptions,
-    compileInputs in MultiJvm <<= (compileInputs in MultiJvm) dependsOn (ScalariformKeys.format in MultiJvm),
+    compileInputs in (MultiJvm, compile) <<= (compileInputs in (MultiJvm, compile)) dependsOn (ScalariformKeys.format in MultiJvm),
     compile in MultiJvm <<= (compile in MultiJvm) triggeredBy (compile in Test),
     ScalariformKeys.preferences in MultiJvm := formattingPreferences) ++
     Option(System.getProperty("akka.test.multi-node.hostsFileName")).map(x => Seq(multiNodeHostsFileName in MultiJvm := x)).getOrElse(Seq.empty) ++
@@ -860,15 +860,27 @@ object AkkaBuild extends Build {
     ((executeMultiJvmTests, multiNodeEnabled) match {
       case (true, true) =>
         executeTests in Test <<= ((executeTests in Test), (multiNodeExecuteTests in MultiJvm)) map {
-          case ((_, testResults), (_, multiNodeResults))  =>
-            val results = testResults ++ multiNodeResults
-            (Tests.overall(results.values), results)
+          case ((testResults), (multiNodeResults))  =>
+            val overall =
+              if (testResults.overall.id < multiNodeResults.overall.id)
+                multiNodeResults.overall
+              else
+                testResults.overall
+            Tests.Output(overall,
+              testResults.events ++ multiNodeResults.events,
+              testResults.summaries ++ multiNodeResults.summaries)
         }
       case (true, false) =>
         executeTests in Test <<= ((executeTests in Test), (executeTests in MultiJvm)) map {
-          case ((_, testResults), (_, multiNodeResults)) =>
-            val results = testResults ++ multiNodeResults
-            (Tests.overall(results.values), results)
+          case ((testResults), (multiNodeResults))  =>
+            val overall =
+              if (testResults.overall.id < multiNodeResults.overall.id)
+                multiNodeResults.overall
+              else
+                testResults.overall
+            Tests.Output(overall,
+              testResults.events ++ multiNodeResults.events,
+              testResults.summaries ++ multiNodeResults.summaries)
         }
       case (false, _) => Seq.empty
     })
